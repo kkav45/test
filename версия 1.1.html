@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Анализ погоды для БПЛА (Open-Meteo)</title>
+    <!-- Подключение Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden; /* Скрываем полосы прокрутки */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            position: relative; /* Для правильного позиционирования меню */
+            background-color: #f0f0f0; /* Светлый фон */
+        }
+        #map {
+            height: calc(100vh - 120px); /* Карта занимает всю высоту минус высота нижней панели */
+            width: 100vw;  /* Карта занимает всю ширину экрана */
+        }
+        /* Стиль для сворачиваемого меню справа (Ventusky-style) */
+        #weather-menu {
+            position: absolute;
+            top: 10px;
+            right: -260px; /* Скрыто за правым краем */
+            width: 240px;
+            height: calc(100vh - 140px); /* Высота меню */
+            background-color: rgba(255, 255, 255, 0.97);
+            padding: 15px 10px 15px 15px;
+            border-radius: 0 4px 4px 0;
+            box-shadow: -2px 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            transition: right 0.3s ease; /* Плавный переход */
+            overflow-y: auto; /* Прокрутка, если контент большой */
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid #ddd;
+        }
+        #weather-menu.open {
+            right: 10px; /* Открытое положение */
+        }
+        #toggle-menu-btn {
+            position: absolute;
+            top: 15px;
+            right: 10px;
+            z-index: 1001;
+            background-color: #333;
+            color: white;
+            border: none;
+            border-radius: 4px 0 0 4px; /* Закругление только слева */
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #toggle-menu-btn:hover {
+            background-color: #555;
+        }
+        .menu-header {
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-align: left;
+            font-size: 16px;
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .param-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 13px;
+            padding: 2px 0;
+        }
+        .param-label {
+            font-weight: 500; /* Slightly bolder than normal */
+            color: #555;
+        }
+        .param-value {
+            color: #333;
+            font-weight: normal;
+        }
+        .restriction-details {
+            background-color: #fff3cd; /* Желтоватый фон */
+            padding: 8px;
+            border-left: 3px solid #ffc107; /* Желтая полоса */
+            margin-top: 10px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .restriction-item {
+            margin: 3px 0;
+            color: #856404; /* Цвет текста */
+        }
+        .no-data {
+            text-align: center;
+            color: #999;
+            font-style: italic;
+            margin-top: 20px;
+            font-size: 13px;
+        }
+        /* Стиль для термометра (градусник) */
+        .temperature-display {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 5px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        .thermometer-icon {
+            font-size: 20px;
+            margin-right: 10px;
+            color: #e74c3c; /* Красный цвет для температуры */
+        }
+        .temperature-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        /* Стиль для нижней панели (календарь и шкала времени) (Ventusky-style) */
+        #bottom-panel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px; /* Увеличена высота для дополнительных элементов */
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 10px 15px;
+            box-sizing: border-box;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px; /* Уменьшенный отступ */
+            border-top: 1px solid #ccc;
+            flex-wrap: wrap; /* Для переноса строк */
+        }
+        .panel-section-date {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start; /* Выравнивание по левому краю */
+        }
+        .panel-section-date label {
+            font-size: 11px;
+            margin-bottom: 3px;
+            color: #555;
+        }
+        .panel-section-date input[type="date"] {
+            padding: 4px;
+            font-size: 11px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            width: 120px; /* Установить фиксированную ширину */
+        }
+        .panel-section-model {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .panel-section-model label {
+            font-size: 11px;
+            margin-bottom: 3px;
+            color: #555;
+        }
+        .panel-section-model select {
+            padding: 4px;
+            font-size: 11px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            width: 120px;
+        }
+        .panel-section-height {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .panel-section-height label {
+            font-size: 11px;
+            margin-bottom: 3px;
+            color: #555;
+        }
+        .panel-section-height select {
+            padding: 4px;
+            font-size: 11px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            width: 120px;
+        }
+        .timeline-container {
+            flex-grow: 1; /* Шкала занимает всё оставшееся место */
+            margin-left: 10px; /* Отступ от календаря */
+            width: 100%; /* Занимает всю ширину */
+            margin-top: 5px;
+        }
+        /* Стили для шкалы времени (таймлайн) */
+        .timeline-slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 20px; /* Увеличена высота для лучшего отображения */
+            border-radius: 5px;
+            background: linear-gradient(to right, #d0ebff, #a3daff, #7ecdf7, #5bb3f6, #3eaaf5, #23a1f4, #0a98f3, #0090f2, #0088f1, #0080f0, #0078ef, #0070ee, #0068ed, #0060ec, #0058eb, #0050ea, #0048e9, #0040e8, #0038e7, #0030e6, #0028e5, #0020e4, #0018e3, #0010e2, #0008e1, #0000e0); /* Пример градиента */
+            outline: none;
+            border: 1px solid #ccc;
+        }
+        .timeline-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 24px;
+            border-radius: 3px;
+            background: #333;
+            cursor: pointer;
+            box-shadow: 0 0 2px 0 rgba(0,0,0,0.5);
+        }
+        .timeline-slider::-moz-range-thumb {
+            width: 16px;
+            height: 24px;
+            border-radius: 3px;
+            background: #333;
+            cursor: pointer;
+            border: 1px solid #000; /* Для Firefox */
+            box-shadow: 0 0 2px 0 rgba(0,0,0,0.5);
+        }
+        .timeline-label {
+            text-align: center;
+            margin-top: 5px;
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+        }
+        /* Стиль для меток времени под шкалой */
+        .time-markers {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            margin-top: 5px;
+            font-size: 10px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <!-- Сворачиваемое меню справа -->
+    <button id="toggle-menu-btn">☰</button>
+    <div id="weather-menu">
+        <div class="menu-header">Погода (Open-Meteo)</div>
+        <div id="weather-display">
+            <div class="no-data">Кликните на карту, чтобы выбрать точку.</div>
+        </div>
+    </div>
+
+    <!-- Нижняя панель (календарь, модель, высота и шкала времени) -->
+    <div id="bottom-panel">
+        <div class="panel-section-date">
+            <label for="selectDate">Дата (UTC):</label>
+            <input type="date" id="selectDate" required min="" max="">
+        </div>
+        <div class="panel-section-model">
+            <label for="selectModel">Модель:</label>
+            <select id="selectModel">
+                <option value="best_match">Best Match</option>
+                <option value="ecmwf_ifs04">ECMWF IFS04</option>
+                <option value="gfs_seamless">GFS Seamless</option>
+            </select>
+        </div>
+        <div class="panel-section-height">
+            <label for="selectHeight">Высота:</label>
+            <select id="selectHeight">
+                <option value="2m">2 м</option>
+                <option value="1000hPa">~110 м (1000гПа)</option>
+                <option value="975hPa">~320 м (975гПа)</option>
+                <option value="950hPa">~500 м (950гПа)</option>
+                <option value="925hPa">~800 м (925гПа)</option>
+            </select>
+        </div>
+        <!-- Контейнер для слайдера времени -->
+        <div class="timeline-container">
+            <input type="range" id="timeline-slider" class="timeline-slider" min="0" max="0" step="1" value="0">
+            <div id="timeline-label" class="timeline-label">--:--</div>
+            <!-- Метки времени (пока пустые, будут заполняться) -->
+            <div class="time-markers" id="time-markers-container">
+                <!-- Метки будут добавлены динамически -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Подключение Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // --- ХРАНИЛИЩЕ ---
+        const ALL_WEATHER_PARAMS = [
+            "temperature_2m", "relative_humidity_2m", "wind_speed_10m", "wind_direction_10m", "wind_gusts_10m",
+            "temperature_1000hPa", "relative_humidity_1000hPa", "wind_speed_1000hPa", "wind_direction_1000hPa",
+            "temperature_975hPa", "relative_humidity_975hPa", "wind_speed_975hPa", "wind_direction_975hPa",
+            "temperature_950hPa", "relative_humidity_950hPa", "wind_speed_950hPa", "wind_direction_950hPa",
+            "temperature_925hPa", "relative_humidity_925hPa", "wind_speed_925hPa", "wind_direction_925hPa",
+            "precipitation", "surface_pressure", "cloud_cover_low"
+        ]; // Все параметры, которые мы хотим запросить
+
+        // --- Хранение данных прогноза ---
+        let HOURLY_FORECAST_DATA = null; // Храним 7-дневные прогнозные данные для текущей точки, модели и даты
+        let SELECTED_MARKER = null; // Храним маркер
+        let timelineSliderElement = null;
+        let timelineLabelElement = null;
+        let timeMarkersContainer = null;
+        let MAX_FORECAST_DATE_STR = null; // Строка в формате YYYY-MM-DD (берется из API)
+
+        // --- Инициализация карты ---
+        let map;
+
+        function initMap() {
+            if (!map) {
+                // Инициализация карты с центром где-то между вашими старыми координатами (примерно посередине)
+                const initialCenter = [55.292, 54.685]; // Приблизительный центр
+                map = L.map('map').setView(initialCenter, 10);
+
+                // Добавление слоя тайлов (например, OpenStreetMap)
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+
+                // Добавляем обработчик клика на карту
+                map.on('click', onMapClick);
+
+                // Инициализируем элементы слайдера
+                timelineSliderElement = document.getElementById('timeline-slider');
+                timelineLabelElement = document.getElementById('timeline-label');
+                timeMarkersContainer = document.getElementById('time-markers-container');
+            }
+        }
+
+        // Функция обработки клика по карте
+        function onMapClick(e) {
+            const clickedLat = e.latlng.lat;
+            const clickedLon = e.latlng.lng;
+
+            console.log(`Клик на координаты: [${clickedLat.toFixed(5)}, ${clickedLon.toFixed(5)}]`);
+
+            // Удаляем старый маркер, если он был
+            if (SELECTED_MARKER) {
+                map.removeLayer(SELECTED_MARKER);
+            }
+
+            // Создаем и добавляем новый маркер
+            SELECTED_MARKER = L.marker([clickedLat, clickedLon]).addTo(map);
+
+            // Сбрасываем данные прогноза, так как точка изменилась
+            HOURLY_FORECAST_DATA = null;
+
+            // Загружаем данные прогноза для точки и параметров из UI
+            loadForecastDataAndShowWeatherFromUI();
+        }
+
+        // Функция загрузки данных прогноза для точки и обновления отображения (из UI)
+        async function loadForecastDataAndShowWeatherFromUI() {
+            if (!SELECTED_MARKER) {
+                console.log("Маркер не установлен, пропускаем загрузку.");
+                return;
+            }
+
+            // Получаем координаты из маркера
+            const { lat, lng: lon } = SELECTED_MARKER.getLatLng();
+
+            // Получаем выбранное время из UI (дата + час из слайдера)
+            const selectedDateStr = document.getElementById('selectDate').value;
+            const selectedHour = parseInt(timelineSliderElement.value); // Получаем значение слайдера (индекс)
+            const selectedModel = document.getElementById('selectModel').value;
+            const selectedHeight = document.getElementById('selectHeight').value;
+
+            if (!selectedDateStr) {
+                 document.getElementById('weather-display').innerHTML = "<div class='no-data'>Пожалуйста, выберите дату.</div>";
+                 closeMenuIfOpen(); // Закрываем меню, если ошибка
+                 return;
+            }
+
+            console.log(`Загрузка прогноза для даты ${selectedDateStr}, часа (индекс) ${selectedHour}, модели ${selectedModel}, высоты ${selectedHeight}`);
+
+            // --- ПРОВЕРКА: Доступна ли выбранная дата вообще? ---
+            if (MAX_FORECAST_DATE_STR && selectedDateStr > MAX_FORECAST_DATE_STR) {
+                console.log(`Дата ${selectedDateStr} превышает максимальную доступную дату ${MAX_FORECAST_DATE_STR}`);
+                document.getElementById('weather-display').innerHTML = `<div class='no-data'>Прогноз для даты ${selectedDateStr} недоступен. Максимальная дата: ${MAX_FORECAST_DATE_STR}.</div>`;
+                closeMenuIfOpen(); // Закрываем меню, если ошибка
+                return; // Важно выйти, если дата недоступна
+            }
+
+            // Формируем дату и время для API (HH:00:00) - только для отображения времени в отчете
+            // Время берется из индекса слайдера в массиве данных
+            const requestDate = selectedDateStr;
+            const requestCoords = `${lat},${lon}`;
+            const requestModel = selectedModel;
+            const cacheKey = `${requestDate}_${requestCoords}_${requestModel}`;
+
+            if (!HOURLY_FORECAST_DATA || HOURLY_FORECAST_DATA.cacheKey !== cacheKey) {
+                console.log("Запрашиваем новые 7-дневные данные для точки, даты и модели...");
+                const apiUrl = "https://api.open-meteo.com/v1/forecast";
+
+                const params = new URLSearchParams({
+                    latitude: lat,
+                    longitude: lon,
+                    hourly: ALL_WEATHER_PARAMS.join(','),
+                    models: selectedModel, // Выбранная модель
+                    forecast_days: 7, // Запрашиваем 7 дней
+                    wind_speed_unit: "ms",
+                    timezone: "UTC" // Убедимся, что время в UTC
+                });
+
+                try {
+                    const response = await fetch(`${apiUrl}?${params}`);
+                    if (!response.ok) {
+                        throw new Error(`Ошибка сети: ${response.status} ${response.statusText}`);
+                    }
+                    const data = await response.json();
+                    console.log("Данные 7-дневного прогноза получены:", data);
+
+                    // --- ПРОВЕРКА: Есть ли данные для выбранной даты в ответе? ---
+                    const hourlyTimes = data.hourly.time;
+                    if (!hourlyTimes || hourlyTimes.length === 0) {
+                        throw new Error("API вернул пустой массив времени.");
+                    }
+
+                    // Извлекаем дату из выбранной строки (YYYY-MM-DD)
+                    const [reqYear, reqMonth, reqDay] = selectedDateStr.split('-').map(Number);
+
+                    // Проверяем, есть ли хотя бы одна метка времени, соответствующая дню (день, месяц, год)
+                    let dateAvailable = false;
+                    for (let i = 0; i < hourlyTimes.length; i++) {
+                        const timeDate = new Date(hourlyTimes[i]);
+                        if (timeDate.getUTCFullYear() === reqYear &&
+                            timeDate.getUTCMonth() === reqMonth - 1 && // Месяцы в JS начинаются с 0
+                            timeDate.getUTCDate() === reqDay) {
+                                dateAvailable = true;
+                                break; // Нашли хотя бы одну запись для дня
+                        }
+                    }
+
+                    if (!dateAvailable) {
+                        // Это не должно произойти, если MAX_FORECAST_DATE_STR была установлена правильно и проверка выше сработала.
+                        // Но на всякий случай:
+                        const lastAPIDate = new Date(hourlyTimes[hourlyTimes.length - 1]).toISOString().split('T')[0];
+                        throw new Error(`Прогноз для даты ${selectedDateStr} недоступен. API предоставляет данные только до ${lastAPIDate}.`);
+                    }
+
+                    // Обновляем максимальную дату из API (на случай, если она изменилась с последнего запроса)
+                    const lastTimeISO = hourlyTimes[hourlyTimes.length - 1];
+                    const lastDate = new Date(lastTimeISO);
+                    const maxDateUTC = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), lastDate.getUTCDate());
+                    const maxDate = new Date(maxDateUTC);
+                    MAX_FORECAST_DATE_STR = maxDate.toISOString().split('T')[0];
+
+                    // Сохраняем данные и ключ кэша
+                    HOURLY_FORECAST_DATA = {
+                         hourly: data.hourly,
+                        cacheKey: cacheKey
+                    };
+
+                    // Обновляем слайдер и метки времени
+                    updateTimelineSlider(hourlyTimes);
+
+                } catch (error) {
+                    console.error("Ошибка при загрузке 7-дневных данных прогноза:", error);
+                    const errorMessage = error && typeof error.message === 'string' ? error.message : 'Неизвестная ошибка';
+                    document.getElementById('weather-display').innerHTML = `<div class='no-data'>Ошибка: ${errorMessage}</div>`;
+                    closeMenuIfOpen(); // Закрываем меню, если ошибка
+                    return; // Важно выйти, если не удалось загрузить данные или дата недоступна
+                }
+            } else {
+                 console.log("Используем закэшированные 7-дневные данные.");
+                 // Даже если данные закэшированы, нам нужно обновить слайдер, если модель или дата поменялась
+                 updateTimelineSlider(HOURLY_FORECAST_DATA.hourly.time);
+            }
+
+            // Ищем индекс, соответствующий выбранному часу в закэшированных данных
+            // selectedHour теперь является индексом слайдера
+            const hourlyTimes = HOURLY_FORECAST_DATA.hourly.time;
+            let targetIndex = selectedHour;
+            if (targetIndex < 0 || targetIndex >= hourlyTimes.length) {
+                console.error("Неверный индекс времени:", targetIndex);
+                document.getElementById('weather-display').innerHTML = `<div class='no-data'>Неверный индекс времени.</div>`;
+                return; // Выходим, если индекс не найден
+            }
+
+            // Показываем анализ для найденного индекса и высоты
+            showWeatherAnalysis(HOURLY_FORECAST_DATA.hourly, targetIndex, selectedHeight, { lat, lon }, hourlyTimes[targetIndex]);
+
+            // Открываем меню
+            openMenu();
+        }
+
+        // Функция обновления слайдера и меток времени
+        function updateTimelineSlider(timesArray) {
+            if (!timelineSliderElement || !timesArray || timesArray.length === 0) return;
+
+            timelineSliderElement.min = 0;
+            timelineSliderElement.max = timesArray.length - 1;
+
+            // Обновляем метку текущего времени
+            const currentIndex = parseInt(timelineSliderElement.value);
+            if (currentIndex >= 0 && currentIndex < timesArray.length) {
+                timelineLabelElement.textContent = new Date(timesArray[currentIndex]).toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+            }
+
+            // Обновляем метки времени под слайдером
+            timeMarkersContainer.innerHTML = ''; // Очищаем контейнер
+            const step = Math.ceil(timesArray.length / 7); // Примерно 7 меток
+            for (let i = 0; i < timesArray.length; i += step) {
+                const time = new Date(timesArray[i]);
+                const timeStr = time.getHours().toString().padStart(2, '0');
+                const markerSpan = document.createElement('span');
+                markerSpan.textContent = timeStr;
+                timeMarkersContainer.appendChild(markerSpan);
+            }
+            // Добавим последнюю метку, если она не совпадает с предыдущей
+            if ((timesArray.length - 1) % step !== 0) {
+                const lastTime = new Date(timesArray[timesArray.length - 1]);
+                const lastTimeStr = lastTime.getHours().toString().padStart(2, '0');
+                const lastMarkerSpan = document.createElement('span');
+                lastMarkerSpan.textContent = lastTimeStr;
+                timeMarkersContainer.appendChild(lastMarkerSpan);
+            }
+        }
+
+
+        // Функция показа анализа погоды в меню
+        function showWeatherAnalysis(hourlyData, index, height, coords, timeISO) {
+            if (!hourlyData || index < 0 || index >= hourlyData.time.length || !coords) {
+                console.error("Неверные данные для отображения.");
+                document.getElementById('weather-display').innerHTML = "<div class='no-data'>Нет данных для отображения.</div>";
+                return;
+            }
+
+            const { lat, lon } = coords;
+            // Форматируем время для отображения
+            const displayTime = timeISO.replace('T', ' ').substring(0, 16) + ' UTC';
+
+            // --- Извлечение данных для выбранного индекса и высоты ---
+            // Определяем суффикс для параметров в зависимости от высоты
+            let suffix = '';
+            switch(height) {
+                case '2m':
+                    suffix = '_2m'; // Для 2м используем _2m, но ветер и порывы с 10м
+                    break;
+                case '1000hPa':
+                    suffix = '_1000hPa';
+                    break;
+                case '975hPa':
+                    suffix = '_975hPa';
+                    break;
+                case '950hPa':
+                    suffix = '_950hPa';
+                    break;
+                case '925hPa':
+                    suffix = '_925hPa';
+                    break;
+                default:
+                    suffix = '_2m'; // По умолчанию 2м
+            }
+
+            // Получаем параметры
+            // Для 2м используем _2m для темп. и влажности, _10m для ветра и порывов
+            let temp = null, humidity = null, wind_speed = null, wind_direction = null, wind_gusts = null;
+            if (height === '2m') {
+                temp = hourlyData[`temperature_2m`][index];
+                humidity = hourlyData[`relative_humidity_2m`][index];
+                wind_speed = hourlyData[`wind_speed_10m`][index];
+                wind_direction = hourlyData[`wind_direction_10m`][index];
+                wind_gusts = hourlyData[`wind_gusts_10m`][index];
+            } else {
+                // Для других высот используем соответствующий суффикс
+                temp = hourlyData[`temperature${suffix}`][index];
+                humidity = hourlyData[`relative_humidity${suffix}`][index];
+                wind_speed = hourlyData[`wind_speed${suffix}`][index];
+                wind_direction = hourlyData[`wind_direction${suffix}`][index];
+                // Порывы ветра доступны только на 10м (2м), поэтому для других высот будет null
+                wind_gusts = null; // или hourlyData[`wind_gusts${suffix}`][index] если они доступны (обычно нет)
+            }
+
+            // Остальные параметры (не зависящие от высоты, или с общей высотой)
+            const precipitation = hourlyData.precipitation[index];
+            const surface_pressure_hpa = hourlyData.surface_pressure[index]; // Давление всегда на уровне земли
+            const cloud_cover_low = hourlyData.cloud_cover_low[index]; // Покрытие низких облаков на уровне земли
+
+            // --- Конвертация давления ---
+            const pressure_mmhg = surface_pressure_hpa !== null ? (surface_pressure_hpa * 0.750062) : null;
+
+            // --- Формирование отчета с эмодзи ---
+            let reportHtml = `<div class="param-row"><span class="param-label">📍 [${lat.toFixed(5)}, ${lon.toFixed(5)}]</span></div>`;
+            reportHtml += `<div class="param-row"><span class="param-label">📅 ${displayTime}</span></div>`;
+            reportHtml += `<div class="param-row"><span class="param-label">📏 Высота: ${height}</span></div>`;
+
+            // --- Добавляем "градусник" ---
+            reportHtml += `<div class="temperature-display">`;
+            reportHtml += `<div class="thermometer-icon">🌡️</div>`;
+            reportHtml += `<div class="temperature-value">${temp !== null ? temp.toFixed(1) + '°C' : 'N/A'}</div>`;
+            reportHtml += `</div>`;
+
+            reportHtml += `<div class="param-row"><span class="param-label">💧 Влажность:</span><span class="param-value">${humidity !== null ? humidity.toFixed(0) + '%' : 'N/A'}</span></div>`;
+            reportHtml += `<div class="param-row"><span class="param-label">💨 Ветер:</span><span class="param-value">${wind_speed !== null ? wind_speed.toFixed(1) + ' м/с' : 'N/A'} (${wind_direction !== null ? degreesToCardinal(wind_direction) : 'N/A'})</span></div>`;
+            reportHtml += `<div class="param-row"><span class="param-label">🌪️ Порывы:</span><span class="param-value">${wind_gusts !== null ? wind_gusts.toFixed(1) + ' м/с' : 'N/A (на 2м)'}</span></div>`;
+            reportHtml += `<div class="param-row"><span class="param-label">🌧️ Осадки:</span><span class="param-value">${precipitation !== null ? precipitation.toFixed(1) + ' мм/ч' : 'N/A'}</span></div>`;
+
+            // --- Безопасная проверка тренда давления ---
+            let pressure_trend_html = "";
+            let pressure_display = 'N/A';
+            if (index > 0) {
+                const currentPressureHpa = surface_pressure_hpa;
+                const prevPressureHpa = hourlyData.surface_pressure[index - 1];
+
+                if (currentPressureHpa !== null && prevPressureHpa !== null) {
+                    const currentPressureMmHg = currentPressureHpa * 0.750062;
+                    const prevPressureMmHg = prevPressureHpa * 0.750062;
+                    pressure_display = currentPressureMmHg.toFixed(1) + ' мм.рт.ст.';
+                    if (currentPressureMmHg < prevPressureMmHg) {
+                         pressure_trend_html = " ⬇️";
+                    }
+                } else {
+                    pressure_display = (currentPressureHpa !== null ? (currentPressureHpa * 0.750062).toFixed(1) : 'N/A') + ' мм.рт.ст.';
+                }
+            } else {
+                pressure_display = (surface_pressure_hpa !== null ? (surface_pressure_hpa * 0.750062).toFixed(1) : 'N/A') + ' мм.рт.ст.';
+            }
+
+            reportHtml += `<div class="param-row"><span class="param-label">🔽 Давление:</span><span class="param-value">${pressure_display}${pressure_trend_html}</span></div>`;
+            reportHtml += `<div class="param-row"><span class="param-label">☁️ Облака (низкие):</span><span class="param-value">${cloud_cover_low !== null ? cloud_cover_low.toFixed(0) + '%' : 'N/A'}</span></div>`;
+
+            // --- Проверка ограничений и сбор подробностей ---
+            const restrictionDetails = [];
+
+            if (precipitation !== null && precipitation > 0) {
+                restrictionDetails.push({ emoji: "☔", param: "Осадки", value: `${precipitation.toFixed(1)} мм/ч`, condition: "> 0 мм/ч" });
+            }
+            if (temp !== null) {
+                if (temp > 40) {
+                    restrictionDetails.push({ emoji: "🔥", param: "Темп.", value: `${temp.toFixed(1)}°C`, condition: "> 40°C" });
+                }
+                if (temp < -40) {
+                    restrictionDetails.push({ emoji: "❄️", param: "Темп.", value: `${temp.toFixed(1)}°C`, condition: "< -40°C" });
+                }
+            }
+            if (humidity !== null && humidity > 87) {
+                restrictionDetails.push({ emoji: "💧", param: "Влажность", value: `${humidity.toFixed(0)}%`, condition: "> 87%" });
+            }
+            if (wind_speed !== null && wind_speed > 10) {
+                restrictionDetails.push({ emoji: "💨", param: "Ветер", value: `${wind_speed.toFixed(1)} м/с`, condition: "> 10 м/с" });
+            }
+            if (wind_gusts !== null && wind_gusts > 15) {
+                restrictionDetails.push({ emoji: "🌪️", param: "Порывы", value: `${wind_gusts.toFixed(1)} м/с`, condition: "> 15 м/с" });
+            }
+            if (humidity !== null && humidity >= 95) {
+                restrictionDetails.push({ emoji: "🌫️", param: "Влажность (туман)", value: `${humidity.toFixed(0)}%`, condition: ">= 95%" });
+            }
+
+            // --- Определение статуса и финального сообщения ---
+            if (restrictionDetails.length > 0) {
+                reportHtml += `<div class="param-row"><span class="param-label">⚠️ Ограничения:</span><span class="param-value">${restrictionDetails.map(r => r.emoji).join(' ')}</span></div>`;
+                reportHtml += '<div class="restriction-details">';
+                restrictionDetails.forEach(detail => {
+                    reportHtml += `<div class="restriction-item">${detail.emoji} ${detail.param}: ${detail.value} (${detail.condition})</div>`;
+                });
+                reportHtml += '</div>';
+                reportHtml += `<div class="param-row"><span class="param-label">❌ Решение:</span><span class="param-value">Полёт НЕ рекомендуется.</span></div>`;
+            } else {
+                const windDirStr = wind_direction !== null ? degreesToCardinal(wind_direction) : 'N/A';
+                reportHtml += `<div class="param-row"><span class="param-label">✅ Решение:</span><span class="param-value">Полёт возможен, ветер ${windDirStr}. 🛫</span></div>`;
+            }
+
+            if (pressure_trend_html) {
+                reportHtml += `<div class="param-row"><span class="param-label">📈 Примечание:</span><span class="param-value">Давление падает.${pressure_trend_html}</span></div>`;
+            }
+
+            // Обновляем содержимое меню
+            document.getElementById('weather-display').innerHTML = reportHtml;
+        }
+
+        // Функция открытия меню
+        function openMenu() {
+            document.getElementById('weather-menu').classList.add('open');
+        }
+
+        // Функция закрытия меню
+        function closeMenu() {
+            document.getElementById('weather-menu').classList.remove('open');
+        }
+
+        // Функция закрытия меню, если оно открыто
+        function closeMenuIfOpen() {
+            const menu = document.getElementById('weather-menu');
+            if (menu.classList.contains('open')) {
+                closeMenu();
+            }
+        }
+
+        // Функция преобразования градусов в направление
+        function degreesToCardinal(degrees) {
+            if (degrees === null || degrees === undefined) return "N/A";
+            const val = Math.round(degrees / 22.5) % 16;
+            const arr = ['С', 'ССВ', 'СВ', 'ВСВ', 'В', 'ВЮВ', 'ЮВ', 'ЮЮВ', 'Ю', 'ЮЮЗ', 'ЮЗ', 'ЗЮЗ', 'З', 'ЗСЗ', 'СЗ', 'ССЗ'];
+            return arr[val];
+        }
+
+        // Функция получения и установки лимитов календаря из API (для Open-Meteo)
+        async function setCalendarLimitsFromAPI() {
+            // Используем координаты по умолчанию или центр карты для проверки
+            const defaultLat = 55.292;
+            const defaultLon = 54.685;
+
+            const apiUrl = "https://api.open-meteo.com/v1/forecast";
+
+            const params = new URLSearchParams({
+                latitude: defaultLat,
+                longitude: defaultLon,
+                hourly: "temperature_2m", // Запрашиваем только один параметр для экономии
+                models: "best_match", // Используем best_match для определения лимита
+                forecast_days: 7 // Запрашиваем 7 дней
+            });
+
+            try {
+                const response = await fetch(`${apiUrl}?${params}`);
+                if (!response.ok) {
+                    console.error("Не удалось получить лимиты даты из Open-Meteo API, используем fallback.");
+                    // Fallback: сегодня + 7 дней
+                    const fallbackMaxDate = new Date();
+                    fallbackMaxDate.setDate(fallbackMaxDate.getDate() + 7);
+                    MAX_FORECAST_DATE_STR = fallbackMaxDate.toISOString().split('T')[0];
+                } else {
+                    const data = await response.json();
+                    console.log("Данные Open-Meteo для определения лимита даты получены:", data);
+
+                    const hourlyTimes = data.hourly.time;
+                    if (!hourlyTimes || hourlyTimes.length === 0) {
+                        throw new Error("Open-Meteo API вернул пустой массив времени для определения лимита.");
+                    }
+
+                    // Берем последнюю доступную дату из ответа
+                    const lastTimeISO = hourlyTimes[hourlyTimes.length - 1];
+                    const lastDate = new Date(lastTimeISO);
+                    // Округляем вниз до начала дня UTC
+                    const maxDateUTC = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), lastDate.getUTCDate());
+                    const maxDate = new Date(maxDateUTC);
+
+                    MAX_FORECAST_DATE_STR = maxDate.toISOString().split('T')[0];
+                    console.log("Найдена максимальная дата прогноза Open-Meteo:", MAX_FORECAST_DATE_STR);
+                }
+
+                // Устанавливаем ограничения календаря
+                const today = new Date();
+                const minDateStr = today.toISOString().split('T')[0];
+
+                const dateInput = document.getElementById('selectDate');
+                dateInput.setAttribute('min', minDateStr);
+                if (MAX_FORECAST_DATE_STR) {
+                    dateInput.setAttribute('max', MAX_FORECAST_DATE_STR);
+                    // Убедимся, что выбранная дата не превышает max
+                    if (dateInput.value > MAX_FORECAST_DATE_STR) {
+                        dateInput.value = MAX_FORECAST_DATE_STR;
+                    }
+                }
+
+                console.log(`Календарь Open-Meteo ограничен: min=${minDateStr}, max=${MAX_FORECAST_DATE_STR || 'not set'}`);
+
+                // Устанавливаем значение по умолчанию на сегодня
+                dateInput.valueAsDate = today;
+
+            } catch (error) {
+                console.error("Ошибка при определении лимитов календаря из Open-Meteo API:", error);
+                // Fallback: сегодня + 7 дней
+                const fallbackMaxDate = new Date();
+                fallbackMaxDate.setDate(fallbackMaxDate.getDate() + 7);
+                MAX_FORECAST_DATE_STR = fallbackMaxDate.toISOString().split('T')[0];
+                const today = new Date();
+                const minDateStr = today.toISOString().split('T')[0];
+
+                const dateInput = document.getElementById('selectDate');
+                dateInput.setAttribute('min', minDateStr);
+                dateInput.setAttribute('max', MAX_FORECAST_DATE_STR);
+
+                // Устанавливаем значение по умолчанию на сегодня
+                dateInput.valueAsDate = today;
+            }
+        }
+
+        // Инициализация: установить дату по умолчанию и инициализировать карту
+        window.onload = async function() {
+            // Устанавливаем ограничения календаря из Open-Meteo API
+            await setCalendarLimitsFromAPI();
+
+            // Инициализация карты
+            initMap();
+
+            // Добавить обработчик для кнопки меню
+            document.getElementById('toggle-menu-btn').addEventListener('click', function() {
+                const menu = document.getElementById('weather-menu');
+                if (menu.classList.contains('open')) {
+                    closeMenu();
+                } else {
+                    openMenu();
+                }
+            });
+
+            // Добавить обработчик события изменения слайдера
+            timelineSliderElement.oninput = function() {
+                // selectedHour теперь является индексом
+                const index = parseInt(this.value);
+                // Получаем время из кэшированных данных по индексу
+                if (HOURLY_FORECAST_DATA && index >= 0 && index < HOURLY_FORECAST_DATA.hourly.time.length) {
+                    const timeISO = HOURLY_FORECAST_DATA.hourly.time[index];
+                    const displayTime = new Date(timeISO).toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+                    timelineLabelElement.textContent = displayTime;
+                } else {
+                     timelineLabelElement.textContent = '--:--';
+                }
+
+                // Если маркер установлен, загружаем данные для нового времени (используя кэш)
+                if (SELECTED_MARKER) {
+                    loadForecastDataAndShowWeatherFromUI();
+                }
+                // Если маркер не установлен, ничего не делаем при движении слайдера
+            };
+
+            // Добавить обработчики для изменения модели и высоты
+            document.getElementById('selectModel').addEventListener('change', function() {
+                 if (SELECTED_MARKER) {
+                    loadForecastDataAndShowWeatherFromUI();
+                 }
+            });
+
+            document.getElementById('selectHeight').addEventListener('change', function() {
+                 if (SELECTED_MARKER) {
+                    loadForecastDataAndShowWeatherFromUI();
+                 }
+            });
+        };
+
+    </script>
+</body>
+</html>
